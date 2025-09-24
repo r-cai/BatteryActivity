@@ -1,0 +1,9 @@
+<resources>
+    <string name="app_name">BatteryActivity</string>
+    <string name="about_button">About</string>
+    <string name="about_title">About</string>
+    <string name="about_app_description">This application was developed as part of research supported by the National Science Foundation.</string>
+    <string name="nsf_acknowledgment">This material is based upon work supported by the National Science Foundation under Grant No. 2144296.\n\nAny opinions, findings, and conclusions or recommendations expressed in this material are those of the author(s) and do not necessarily reflect the views of the National Science Foundation.</string>
+    <string name="developer_info">Developed by Ruoxin Cai</string>
+    <string name="nsf_logo_desc">National Science Foundation logo</string>
+</resources>
