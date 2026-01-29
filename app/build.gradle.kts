@@ -36,7 +36,8 @@ android {
 }
 
 dependencies {
-    implementation ("com.google.android.material:material:1.6.0")
+    implementation (libs.material.v160)
+    implementation (libs.androidx.work.runtime.ktx.v290)
     implementation (libs.graphview)
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.appcompat)
