@@ -37,21 +37,34 @@
     
     
     class MainActivity : AppCompatActivity() {
-        private lateinit var broadcastReceiver: BatteryBroadcastReceiver
+//        private lateinit var broadcastReceiver: BatteryBroadcastReceiver
         private lateinit var graph: GraphView
         private var voltageSeries: LineGraphSeries<DataPoint>? = null
         private var currentSeries: LineGraphSeries<DataPoint>? = null
-        private var time = -5.0
-    
+        private var time = 0.0
+        private var startTime = System.currentTimeMillis()
+        private val maxDataPoints = 100
+        companion object {
+            const val TIMER_TYPE_FAST = "fast"
+            const val TIMER_TYPE_SLOW = "slow"
+        }
+        private lateinit var batteryLevelText: TextView
+        private lateinit var batteryTempText: TextView
+        private lateinit var batteryVoltageText: TextView
+        private lateinit var batteryStatusText: TextView
+        private lateinit var currentText: TextView
+        private lateinit var capacityText: TextView
+        private lateinit var batcapacityText: TextView
+        private lateinit var batteryRemainingEnergy: TextView
         // Service data receiver
         private val serviceDataReceiver = object : android.content.BroadcastReceiver() {
             override fun onReceive(context: Context?, intent: Intent?) {
                 if (intent?.action == BatteryMonitorService.ACTION_BATTERY_DATA) {
-                    updateFromService(intent)
+                    updateEverythingFromService(intent)
                 }
             }
         }
-    
+
         @SuppressLint("UnspecifiedRegisterReceiverFlag", "SuspiciousIndentation")
         override fun onCreate(savedInstanceState: Bundle?) {
             try{
@@ -60,14 +73,15 @@
             setContentView(R.layout.activity_main)
                 checkNotificationPermission()
             //TextView references
-            val batteryLevelText = findViewById<TextView>(R.id.text_level_scale)
-            val batteryTempText = findViewById<TextView>(R.id.text_temperature)
-            val batteryVoltageText = findViewById<TextView>(R.id.text_voltage)
-            val batteryStatusText = findViewById<TextView>(R.id.text_property_status)
-            val currentText = findViewById<TextView>(R.id.text_property_current_average)
-            val capacityText = findViewById<TextView>(R.id.text_property_capacity)
-            val batcapacityText = findViewById<TextView>(R.id.text_property_charge_counter)
-            val batteryRemainingEnergy = findViewById<TextView>(R.id.text_property_energy_counter)
+             batteryLevelText = findViewById<TextView>(R.id.text_level_scale)
+             batteryTempText = findViewById<TextView>(R.id.text_temperature)
+             batteryVoltageText = findViewById<TextView>(R.id.text_voltage)
+             batteryStatusText = findViewById<TextView>(R.id.text_property_status)
+             currentText = findViewById<TextView>(R.id.text_property_current_average)
+             capacityText = findViewById<TextView>(R.id.text_property_capacity)
+             batcapacityText = findViewById<TextView>(R.id.text_property_charge_counter)
+             batteryRemainingEnergy = findViewById<TextView>(R.id.text_property_energy_counter)
+
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                     // Android 13+ requires export flag
                     registerReceiver(
@@ -82,6 +96,7 @@
                         IntentFilter(BatteryMonitorService.ACTION_BATTERY_DATA)
                     )
                 }
+                Log.d("MainActivity", "ACTION_BATTERY_DATA constant value: '${BatteryMonitorService.ACTION_BATTERY_DATA}'")
             // Setup graph
             graph = findViewById(R.id.graph)
             graph.setBackgroundColor(Color.WHITE)
@@ -105,8 +120,8 @@
     //            graph.secondScale.verticalAxisTitleColor = Color.BLACK
                 addSeries(currentSeries)
                 // Set bounds for right axis
-                setMinY(-4.0)
-                setMaxY(4.0)
+                setMinY(-700.0)
+                setMaxY(700.0)
             }
             graph.gridLabelRenderer.reloadStyles()
 
@@ -153,16 +168,17 @@
                 }
             }
             graph.viewport.apply {
-                setMinX(0.0)
-                setMaxX(60.0)
-                isXAxisBoundsManual = true
-                setYAxisBoundsManual(true)
-                setMinY(1.0)
-                setMaxY(5.0)
+                graph.viewport.apply {
+                    setMinX(0.0)
+                    setMaxX(60.0)
+                    isXAxisBoundsManual = true
+                    setYAxisBoundsManual(true)
+                    setMinY(1.0)
+                    setMaxY(5.0)
+                    isScalable = false
+//                    isScrollable = true //manual scrolling
+                }
             }
-            graph.viewport.setMinX(0.0)
-            graph.viewport.setMaxX(60.0)
-    
             ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.main)) { v, insets ->
                 val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
                 v.setPadding(systemBars.left, systemBars.top, systemBars.right, systemBars.bottom)
@@ -174,44 +190,21 @@
                 startActivity(Intent(this, AboutActivity::class.java))
             }
             setupDownloadButton()
-    
-            broadcastReceiver = BatteryBroadcastReceiver { data ->
-                runOnUiThread {
-                    findViewById<TextView>(R.id.text_timestamp).text =
-                        SimpleDateFormat("MM/dd/yy HH:mm:ss", Locale.getDefault())
-                            .format(Date())
-                    batteryStatusText.text = "${getStatusString(data.status)}"
-                    batteryLevelText.text = "${data.level}% (${data.level.toFloat() / data.scale * 100}%)"
-                    batteryTempText.text = "${data.temperature / 10f}°C"
-                    batteryVoltageText.text = "${data.voltage.toFloat() / 1000} V"
-                    capacityText.text = "${data.propertyCapacity}"
-                    batcapacityText.text = "${data.propertyChargeCounter.toFloat() / 1000000} Ah"
-                    currentText.text = "${data.propertyCurrentAverage.toFloat() / 1000} mA"
-                    batteryRemainingEnergy.text = "${data.propertyEnergyCounter/1000000000000} kWh"
-                }
-            }
-    
             startForegroundService()
-                scheduleServiceRestart()
+                Handler(Looper.getMainLooper()).postDelayed({
+                    scheduleServiceRestart()
+                }, 30000)
                 Handler(Looper.getMainLooper()).postDelayed({
                     val isRunning = isServiceRunning()
                     Log.d("MainActivity", "Service running check: $isRunning")
                     Toast.makeText(this,
-                        if (isRunning) "✅ Service is running" else "❌ Service not running",
+                        if (isRunning) "Service is running" else "Service not running",
                         Toast.LENGTH_SHORT
                     ).show()
                 }, 2000)
-        val filter = IntentFilter(Intent.ACTION_BATTERY_CHANGED)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            // ACTION_BATTERY_CHANGED is a system broadcast, use RECEIVER_EXPORTED
-            registerReceiver(
-                broadcastReceiver,
-                filter,
-                Context.RECEIVER_EXPORTED
-            )
-        } else {
-            registerReceiver(broadcastReceiver, filter)
-        }
+        Log.d("MainActivity", "Graph initialized: ${graph != null}")
+        Log.d("MainActivity", "Voltage series: ${voltageSeries != null}")
+        Log.d("MainActivity", "Current series: ${currentSeries != null}")
         } catch (e: Exception) {
             Log.e("MainActivity", "Crash on create: ${e.message}", e)
             Toast.makeText(this, "App crashed: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
@@ -275,21 +268,73 @@
                 Log.e("MainActivity", "Failed to schedule service restart", e)
             }
         }
-        private fun updateFromService(intent: Intent) {
-            val voltage = intent.getIntExtra(BatteryMonitorService.EXTRA_VOLTAGE, 0)
-            val current = intent.getIntExtra(BatteryMonitorService.EXTRA_CURRENT, 0)
-    
-            // Update graph with service data
+        @SuppressLint("SetTextI18n")
+        private fun updateEverythingFromService(intent: Intent) {
             runOnUiThread {
-                addDataPoint(voltage.toDouble() / 1000, current.toDouble() / 1000)
+                try {
+                    // data from service
+                    val voltage = intent.getIntExtra(BatteryMonitorService.EXTRA_VOLTAGE, 0)
+                    val current = intent.getIntExtra(BatteryMonitorService.EXTRA_CURRENT, 0)
+                    val level = intent.getIntExtra(BatteryMonitorService.EXTRA_LEVEL, 0)
+                    val temperature = intent.getIntExtra(BatteryMonitorService.EXTRA_TEMPERATURE, 0)
+                    val status = intent.getIntExtra(BatteryMonitorService.EXTRA_STATUS, -1)
+                    val scale = intent.getIntExtra("scale", 100)
+                    val capacity = intent.getIntExtra("capacity", 0)
+                    val chargeCounter = intent.getIntExtra("chargeCounter", 0)
+//                    val currentAverage = intent.getIntExtra("propertyCurrentAverage", 0)
+                    val energyCounter = intent.getLongExtra("energyCounter", 0L)
+
+                    // timestamp
+                    findViewById<TextView>(R.id.text_timestamp)?.text =
+                        SimpleDateFormat("MM/dd/yy HH:mm:ss", Locale.getDefault())
+                            .format(Date())
+                    // text views
+                    batteryStatusText.text = "${getStatusString(status)}"
+                    batteryLevelText.text = "${level}% (${level.toFloat() / scale * 100}%)"
+                    batteryTempText.text = "${temperature / 10f}°C"
+                    batteryVoltageText.text = "${voltage.toFloat() / 1000} V"
+                    capacityText.text = "${capacity}"
+                    batcapacityText.text = "${chargeCounter.toFloat() / 1000000} Ah"
+                    currentText.text = "${current.toFloat() / 1000} mA"
+                    batteryRemainingEnergy.text = "${energyCounter/1000000000000} kWh"
+
+                    // Update graph
+                    updateGraph(voltage.toFloat() / 1000, current.toFloat() / 1000)
+
+                    Log.d("MainActivity", "UI Updated: ${current.toFloat()/1000}")
+
+                } catch (e: Exception) {
+                    Log.e("MainActivity", "Error updating UI from service", e)
+                }
+            }
+        }
+        private fun updateGraph(voltage: Float, current:Float) {
+            try {
+                val timestamp = System.currentTimeMillis()
+                val timeInSeconds = (timestamp - startTime) / 1000.0
+
+                voltageSeries?.appendData(DataPoint(timeInSeconds, voltage.toDouble()), false, maxDataPoints)
+                currentSeries?.appendData(DataPoint(timeInSeconds, current.toDouble()), false, maxDataPoints)
+
+                // Auto-scroll
+                if (timeInSeconds > graph.viewport.getMaxX(false)) {
+                    graph.viewport.apply {
+                        setMaxX(timeInSeconds)
+                        setMinX(max(timeInSeconds - 60.0, 0.0))
+                    }
+                }
+
+                graph.onDataChanged(true, true)
+
+            } catch (e: Exception) {
+                Log.e("MainActivity", "Error updating graph: ${e.message}")
             }
         }
     
         fun addDataPoint(voltage: Double, current: Double) {
+            voltageSeries?.appendData(DataPoint(time, voltage), true, 15)
+            currentSeries?.appendData(DataPoint(time, current), true, 15)
             time += 5.0
-            voltageSeries?.appendData(DataPoint(time, voltage), false, 15)
-            currentSeries?.appendData(DataPoint(time, current), false, 15)
-    
             if (time > graph.viewport.getMaxX(false) + 5) {
                 graph.viewport.apply {
                     setMaxX(time)
@@ -356,21 +401,16 @@
             //     action = BatteryMonitorService.ACTION_STOP
             // }
             // stopService(stopIntent)
-
-            if (::broadcastReceiver.isInitialized) {
-                try {
-                    unregisterReceiver(broadcastReceiver)
-                    Log.d("MainActivity", "broadcastReceiver unregistered")
-                } catch (e: IllegalArgumentException) {
-                    Log.d("MainActivity", "broadcastReceiver not registered")
-                }
-            }
+//
+//            if (::broadcastReceiver.isInitialized) {
+//                try {
+//                    unregisterReceiver(broadcastReceiver)
+//                    Log.d("MainActivity", "broadcastReceiver unregistered")
+//                } catch (e: IllegalArgumentException) {
+//                    Log.d("MainActivity", "broadcastReceiver not registered")
+//                }
+//            }
             // check if serviceDataReceiver is registered
-            try {
-                unregisterReceiver(serviceDataReceiver)
-            } catch (e: IllegalArgumentException) {
-                Log.d("MainActivity", "serviceDataReceiver not registered")
-            }
             try {
                 unregisterReceiver(serviceDataReceiver)
                 Log.d("MainActivity", "serviceDataReceiver unregistered")

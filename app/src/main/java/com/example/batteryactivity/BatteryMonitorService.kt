@@ -2,7 +2,6 @@ package com.example.batteryactivity
 
 import android.annotation.SuppressLint
 import android.app.*
-import android.content.BroadcastReceiver
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
@@ -14,6 +13,7 @@ import android.os.Build
 import android.os.Environment
 import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.os.PowerManager
 import android.provider.MediaStore
 import android.provider.Settings
@@ -30,6 +30,7 @@ import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 import kotlin.math.roundToInt
 
+@Suppress("DEPRECATION")
 class BatteryMonitorService : Service() {
 
     companion object {
@@ -38,6 +39,7 @@ class BatteryMonitorService : Service() {
         private const val CHANNEL_ID = "BatteryMonitorForeground"
         private const val CHANNEL_NAME = "Battery Monitor Service"
         private const val DEFAULT_UPDATE_INTERVAL = 300000L
+        private const val UI_UPDATE_INTERVAL = 10000L
         private var wakeLock: PowerManager.WakeLock? = null
 
         // Actions
@@ -62,15 +64,17 @@ class BatteryMonitorService : Service() {
     private var scheduledTask: ScheduledFuture<*>? = null
     private val scheduler = Executors.newSingleThreadScheduledExecutor()
     private var updateInterval = DEFAULT_UPDATE_INTERVAL
+    private lateinit var handler: Handler
+    private var uiUpdateRunnable: Runnable? = null
 
     override fun onCreate() {
         super.onCreate()
-        Log.d(TAG, "Service onCreate() called")
 
         notificationManager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
         batteryManager = getSystemService(BATTERY_SERVICE) as BatteryManager
         createNotificationChannel()
         Log.d(TAG, "Notification manager and battery manager initialized")
+        handler = Handler(Looper.getMainLooper())
     }
     private fun releaseWakeLock() {
         wakeLock?.let {
@@ -120,6 +124,21 @@ class BatteryMonitorService : Service() {
             Log.d(TAG, "WakeLock acquired")
         }
     }
+    private fun startUIUpdates() {
+        Log.d(TAG, "startUIUpdates() - Starting 10-second UI updates")
+
+        uiUpdateRunnable = object : Runnable {
+            override fun run() {
+                try {
+                    collectBatteryData(shouldLogToFile = false)
+                    handler.postDelayed(this, UI_UPDATE_INTERVAL)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error in UI update", e)
+                }
+            }
+        }
+        handler.post(uiUpdateRunnable!!)
+    }
     private fun startMonitoring() {
         Log.d(TAG, "startMonitoring() called")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
@@ -140,14 +159,15 @@ class BatteryMonitorService : Service() {
 
             startForeground(NOTIFICATION_ID, notification)
             Log.d(TAG, "Service moved to foreground with notification ID: $NOTIFICATION_ID")
-
+//            collectBatteryData(shouldLogToFile = false)
             restartMonitoring()
+            startUIUpdates()
 
             logToFile("Service started - ${SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())}")
-            Log.d(TAG, "Battery monitoring started with interval: $updateInterval ms")
+            Log.d(TAG, "Battery monitoring started: 5-min logs + 10-sec UI updates")
 
             Handler(mainLooper).postDelayed({
-                collectBatteryData()
+                collectBatteryData(shouldLogToFile = false)
             }, 1000)
 
         } catch (e: Exception) {
@@ -160,26 +180,34 @@ class BatteryMonitorService : Service() {
         scheduledTask?.cancel(true)
         scheduledTask = null
 
-        logToFile("Service stopped - ${SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())}")
-    }
+        uiUpdateRunnable?.let {
+            handler.removeCallbacks(it)
+        }
+        uiUpdateRunnable = null
+        logToFile("Service stopped - ${SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())}")    }
 
     private fun restartMonitoring() {
         Log.d(TAG, "restartMonitoring() called")
         scheduledTask?.cancel(true)
-
-        scheduledTask = scheduler.scheduleAtFixedRate(
+        uiUpdateRunnable?.let {
+            handler.removeCallbacks(it)
+        }
+        scheduledTask = scheduler.scheduleWithFixedDelay(
             {
                 Log.d(TAG, "Scheduled task executing - collecting battery data")
-                collectBatteryData()
+                collectBatteryData(shouldLogToFile = true)
             },
             0,
             updateInterval,
             TimeUnit.MILLISECONDS
         )
-        Log.d(TAG, "Scheduled task restarted with interval: $updateInterval ms")
+
+        startUIUpdates()
+
+        Log.d(TAG, "Scheduled task restarted")
     }
 
-    private fun collectBatteryData() {
+    private fun collectBatteryData(shouldLogToFile: Boolean = true) {
         // Acquire wake lock before starting battery data collection
         acquireWakeLock()
 
@@ -228,14 +256,11 @@ class BatteryMonitorService : Service() {
                 (level * 100 / scale.toFloat()).roundToInt()
             } else -1
 
-            Log.d(TAG, "Battery Data - Level: $percentage%, Voltage: ${voltage.toFloat() / 1000}V, " +
-                    "Current: ${current.toFloat() / 1000}mA, Temp: ${temperature/10f}°C, " +
-                    "Status: ${getStatusString(status)}")
-
             // log
-            logBatteryData(voltage, current, temperature, percentage, status,
-                propertyChargeCounter, propertyCapacity, propertyEnergyCounter)
-
+            if (shouldLogToFile) {
+                logBatteryData(voltage, current, temperature, percentage, status,
+                    propertyChargeCounter, propertyCapacity, propertyEnergyCounter)
+            }
             // ui update
             val broadcastIntent = Intent(ACTION_BATTERY_DATA).apply {
                 putExtra(EXTRA_VOLTAGE, voltage)
@@ -244,14 +269,23 @@ class BatteryMonitorService : Service() {
                 putExtra(EXTRA_TEMPERATURE, temperature)
                 putExtra(EXTRA_STATUS, status)
                 putExtra(EXTRA_TIMESTAMP, System.currentTimeMillis())
-                // Add additional data if needed by UI
+                putExtra("scale", scale)
                 putExtra("capacity", propertyCapacity)
                 putExtra("chargeCounter", propertyChargeCounter)
                 putExtra("energyCounter", propertyEnergyCounter)
+                flags = Intent.FLAG_RECEIVER_FOREGROUND
+                setPackage(packageName)
             }
+            try {
+//                sendBroadcast(broadcastIntent)
+                applicationContext.sendBroadcast(broadcastIntent)
+//                broadcastIntent.setPackage(packageName)
+//                sendBroadcast(broadcastIntent)
 
-            sendBroadcast(broadcastIntent)
-            Log.d(TAG, "Broadcast sent to activity")
+            } catch (e: Exception) {
+                Log.e(TAG, "❌ Broadcast failed: ${e.message}", e)
+            }
+//            sendBroadcast(broadcastIntent)
 
             updateNotification(percentage, status)
             Log.d(TAG, "Notification updated")
@@ -263,7 +297,6 @@ class BatteryMonitorService : Service() {
             Log.d(TAG, "WakeLock released after data collection")
         }
     }
-
     private fun logBatteryData(voltage: Int, current: Int, temperature: Int,
                                level: Int, status: Int, chargeCounter: Int,
                                capacity: Int, energyCounter: Long) {
@@ -570,11 +603,14 @@ class BatteryMonitorService : Service() {
     }
 
     override fun onDestroy() {
+        uiUpdateRunnable?.let {
+            handler.removeCallbacks(it)
+        }
 
         releaseWakeLock()
-        Log.d(TAG, "Service onDestroy() called")
         scheduledTask?.cancel(true)
         scheduler.shutdown()
+        handler.removeCallbacksAndMessages(null)
         stopForeground(true)  // Remove notification when service stops
         Log.d(TAG, "Service stopped and notification removed")
         super.onDestroy()
