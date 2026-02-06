@@ -120,8 +120,8 @@
     //            graph.secondScale.verticalAxisTitleColor = Color.BLACK
                 addSeries(currentSeries)
                 // Set bounds for right axis
-                setMinY(-700.0)
-                setMaxY(700.0)
+                setMinY(-2000.0)
+                setMaxY(2000.0)
             }
             graph.gridLabelRenderer.reloadStyles()
 
